@@ -318,29 +318,56 @@ xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
    CITY SITEMAP
 ========================================================= */
 
-export const generateCitySitemap =
-  async (
-    req,
-    res
-  ) => {
+/* =========================================================
+   CITY SITEMAP
+   ONLY ACTIVE CITIES
+========================================================= */
 
-    try {
+export const generateCitySitemap = async (
+  req,
+  res
+) => {
 
-      const cities =
-        await City.find({
-          status:
-            "Active",
-        });
+  try {
 
-      let xml = `<?xml version="1.0" encoding="UTF-8"?>
+    const cities =
+      await City.find({
+
+        status: {
+          $regex: /^active$/i,
+        },
+
+      })
+        .lean();
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
 
 <urlset
 xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
 xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
 >`;
 
-      cities.forEach(
-        (city) => {
+    cities.forEach(
+      (city) => {
+
+        try {
+
+          /* ==========================
+             STATUS CHECK
+          ========================== */
+
+          if (
+            city?.status?.toLowerCase() !==
+            "active"
+          ) {
+
+            return;
+
+          }
+
+          /* ==========================
+             INVALID SLUG CHECK
+          ========================== */
 
           if (
             !city?.slug ||
@@ -353,11 +380,12 @@ xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
           ) {
 
             return;
+
           }
 
           const imageUrl =
             getImageUrl(
-              city.imageUrl
+              city?.imageUrl
             );
 
           xml += `
@@ -367,93 +395,151 @@ xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
             `${OWN_DOMAIN}/${city.slug}`
           )}</loc>
 
-  <lastmod>${city.updatedAt?.toISOString?.() || ""
-            }</lastmod>
+  <lastmod>${
+            city?.updatedAt
+              ? new Date(
+                  city.updatedAt
+                ).toISOString()
+              : ""
+          }</lastmod>
 
-  ${imageUrl
+  ${
+            imageUrl
               ? `
   <image:image>
-    <image:loc>${escapeXml(imageUrl)}</image:loc>
-    <image:title>${escapeXml(city.name || city.mainCity || "")}</image:title>
+
+    <image:loc>${escapeXml(
+                  imageUrl
+                )}</image:loc>
+
+    <image:title>${escapeXml(
+                  city?.name ||
+                  city?.mainCity ||
+                  ""
+                )}</image:title>
+
   </image:image>`
               : ""
-            }
+          }
 
 </url>`;
-        }
-      );
 
-      xml += `
+        } catch (
+          innerError
+        ) {
+
+          console.log(
+            "❌ CITY XML ERROR:",
+            city?._id,
+            innerError.message
+          );
+
+        }
+
+      }
+    );
+
+    xml += `
 </urlset>`;
 
-      res.header(
-        "Content-Type",
-        "application/xml"
-      );
+    res.header(
+      "Content-Type",
+      "application/xml"
+    );
 
-      setCacheHeaders(
-        res
-      );
+    setCacheHeaders(
+      res
+    );
 
-      return res
-        .status(200)
-        .send(xml);
+    return res
+      .status(200)
+      .send(xml);
 
-    } catch (error) {
+  } catch (error) {
 
-      console.log(
-        error
-      );
+    console.log(
+      "❌ CITY SITEMAP ERROR:"
+    );
 
-      return res.status(
-        500
-      ).json({
+    console.log(
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+
+        success: false,
+
         message:
           "City sitemap failed",
+
+        error:
+          error.message,
+
       });
-    }
-  };
+
+  }
+
+};
 
 /* =========================================================
    SUBCITY SITEMAP
 ========================================================= */
 
-export const generateSubCitySitemap =
-  async (
-    req,
-    res
-  ) => {
+/* =========================================================
+   SUBCITY SITEMAP
+   ONLY ACTIVE SUBCITY + ACTIVE CITY
+========================================================= */
 
-    try {
+export const generateSubCitySitemap = async (
+  req,
+  res
+) => {
 
-      const subCities =
-        await SubCity.find({
-          $or: [
-            {
-              status:
-                "Active",
-            },
-            {
-              status:
-                {
-                  $exists:
-                    false,
-                },
-            },
-          ],
-        });
+  try {
 
-      let xml = `<?xml version="1.0" encoding="UTF-8"?>
+    const subCities =
+      await SubCity.find({
+
+        status: "Active",
+
+      })
+        .populate({
+
+          path: "city",
+
+          match: {
+            status: "Active",
+          },
+
+          select:
+            "mainCity slug status",
+
+        })
+        .lean();
+
+    // Remove subcities whose city is inactive
+    const activeSubCities =
+      subCities.filter(
+        (subCity) => subCity?.city
+      );
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
 
 <urlset
 xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
 xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
 >`;
 
-      subCities.forEach(
-        (
-          subCity
-        ) => {
+    activeSubCities.forEach(
+      (subCity) => {
+
+        try {
+
+          /* ==========================
+             INVALID SLUG CHECK
+          ========================== */
 
           if (
             !subCity?.slug ||
@@ -466,318 +552,440 @@ xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
           ) {
 
             return;
+
           }
+
+          /* ==========================
+             CITY SLUG
+          ========================== */
+
+          const citySlug =
+            subCity?.city?.mainCity
+              ?.toLowerCase()
+              ?.trim()
+              ?.replace(
+                /\s+/g,
+                "-"
+              );
+
+          if (
+            !citySlug
+          ) {
+
+            return;
+
+          }
+
+          /* ==========================
+             URL
+          ========================== */
+
+          const loc =
+            `${OWN_DOMAIN}/${citySlug}/${subCity.slug}`;
 
           const imageUrl =
             getImageUrl(
-              subCity.imageUrl
+              subCity?.imageUrl
             );
 
           xml += `
 <url>
 
   <loc>${escapeXml(
-            `${OWN_DOMAIN}/${subCity.slug}`
+            loc
           )}</loc>
 
-  <lastmod>${subCity.updatedAt?.toISOString?.() || ""
-            }</lastmod>
+  <lastmod>${
+            subCity?.updatedAt
+              ? new Date(
+                  subCity.updatedAt
+                ).toISOString()
+              : ""
+          }</lastmod>
 
-  ${imageUrl
+  ${
+            imageUrl
               ? `
   <image:image>
-    <image:loc>${escapeXml(imageUrl)}</image:loc>
-    <image:title>${escapeXml(subCity.name || "")}</image:title>
+
+    <image:loc>${escapeXml(
+                  imageUrl
+                )}</image:loc>
+
+    <image:title>${escapeXml(
+                  subCity?.name || ""
+                )}</image:title>
+
   </image:image>`
               : ""
-            }
+          }
 
 </url>`;
-        }
-      );
 
-      xml += `
+        } catch (
+          innerError
+        ) {
+
+          console.log(
+            "❌ SUBCITY XML ERROR:",
+            subCity?._id,
+            innerError.message
+          );
+
+        }
+
+      }
+    );
+
+    xml += `
 </urlset>`;
 
-      res.header(
-        "Content-Type",
-        "application/xml"
-      );
+    res.header(
+      "Content-Type",
+      "application/xml"
+    );
 
-      setCacheHeaders(
-        res
-      );
+    setCacheHeaders(
+      res
+    );
 
-      return res
-        .status(200)
-        .send(xml);
+    return res
+      .status(200)
+      .send(xml);
 
-    } catch (error) {
+  } catch (error) {
 
-      console.log(
-        error
-      );
+    console.log(
+      "❌ SUBCITY SITEMAP ERROR:"
+    );
 
-      return res.status(
-        500
-      ).json({
+    console.log(
+      error
+    );
+
+    return res
+      .status(500)
+      .json({
+
+        success: false,
+
         message:
           "SubCity sitemap failed",
+
+        error:
+          error.message,
+
       });
-    }
-  };
+
+  }
+
+};
 
 /* =========================================================
    PROFILE SITEMAP
 ========================================================= */
 
-export const generateProfileSitemap =
-  async (
-    req,
-    res
-  ) => {
+/* =========================================================
+   PROFILE SITEMAP
+   ONLY ACTIVE PROFILES
+========================================================= */
 
-    try {
+export const generateProfileSitemap = async (
+  req,
+  res
+) => {
 
-      const girls =
-        await Girl.find({
-          status:
-            "Active",
-        });
+  try {
 
-      let xml = `<?xml version="1.0" encoding="UTF-8"?>
+    const girls =
+      await Girl.find({
+
+        status: {
+          $regex: /^active$/i,
+        },
+
+      })
+        .select(
+          "_id name permalink imageUrl updatedAt status"
+        )
+        .lean();
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
 
 <urlset
 xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
 xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
 >`;
 
-      girls.forEach(
-        (girl) => {
+    girls.forEach(
+      (girl) => {
 
-          try {
+        try {
 
-            if (
-              !girl?.permalink ||
-              girl.permalink.includes(
-                "undefined"
-              ) ||
-              girl.permalink.includes(
-                "null"
-              )
-            ) {
+          /* ==========================
+             EXTRA STATUS CHECK
+          ========================== */
 
-              return;
-            }
+          if (
+            girl?.status
+              ?.toLowerCase() !==
+            "active"
+          ) {
 
-            const loc =
-              escapeXml(
-                `${OWN_DOMAIN}/${girl.permalink}`
-              );
+            return;
 
-            const imageUrl =
-              getImageUrl(
-                girl?.imageUrl
-              );
+          }
 
-            const title =
-              escapeXml(
-                girl?.name ||
+          /* ==========================
+             INVALID PERMALINK CHECK
+          ========================== */
+
+          if (
+            !girl?.permalink ||
+            girl.permalink.includes(
+              "undefined"
+            ) ||
+            girl.permalink.includes(
+              "null"
+            )
+          ) {
+
+            return;
+
+          }
+
+          const loc =
+            escapeXml(
+              `${OWN_DOMAIN}/call-girls/${girl.permalink}`
+            );
+
+          const imageUrl =
+            getImageUrl(
+              girl?.imageUrl
+            );
+
+          const title =
+            escapeXml(
+              girl?.name ||
                 "Escort Profile"
-              );
+            );
 
-            const lastmod =
-              girl?.updatedAt
-                ? girl.updatedAt.toISOString()
-                : "";
+          const lastmod =
+            girl?.updatedAt
+              ? new Date(
+                  girl.updatedAt
+                ).toISOString()
+              : "";
 
-            xml += `
+          xml += `
 <url>
 
   <loc>${loc}</loc>
 
   <lastmod>${lastmod}</lastmod>
 
-  ${imageUrl
-                ? `
+  ${
+    imageUrl
+      ? `
   <image:image>
-    <image:loc>${escapeXml(imageUrl)}</image:loc>
+
+    <image:loc>${escapeXml(
+      imageUrl
+    )}</image:loc>
+
     <image:title>${title}</image:title>
+
   </image:image>`
-                : ""
-              }
+      : ""
+  }
 
 </url>`;
 
-          } catch (
-            innerError
-          ) {
+        } catch (
+          innerError
+        ) {
 
-            console.log(
-              "❌ GIRL XML ERROR:",
-              girl?._id,
-              innerError.message
-            );
-          }
+          console.log(
+            "❌ GIRL XML ERROR:",
+            girl?._id,
+            innerError.message
+          );
+
         }
-      );
 
-      xml += `
+      }
+    );
+
+    xml += `
 </urlset>`;
 
-      res.setHeader(
-        "Content-Type",
-        "application/xml"
-      );
+    res.setHeader(
+      "Content-Type",
+      "application/xml"
+    );
 
-      setCacheHeaders(
-        res
-      );
+    setCacheHeaders(
+      res
+    );
 
-      return res
-        .status(200)
-        .send(xml);
+    return res
+      .status(200)
+      .send(xml);
 
-    } catch (error) {
+  } catch (error) {
 
-      console.log(
-        "❌ PROFILE SITEMAP ERROR:"
-      );
+    console.log(
+      "❌ PROFILE SITEMAP ERROR:"
+    );
 
-      console.log(
-        error
-      );
+    console.log(
+      error
+    );
 
-      return res.status(
-        500
-      ).json({
+    return res
+      .status(500)
+      .json({
+
+        success: false,
+
         message:
           error.message,
+
       });
-    }
-  };
+
+  }
+
+};
 
 /* =========================================================
    WORDPRESS BLOG SITEMAP
    BLOG IMAGE URL REMAINS ORIGINAL
 ========================================================= */
 
-export const generatePostSitemap =
-  async (
-    req,
-    res
-  ) => {
+export const generatePostSitemap = async (req, res) => {
+  try {
 
-    try {
+   
 
-      const baseUrl =
-        "https://blog.girlswithwine.com";
+    const response = await fetch(
+      "https://blog.girlswithwine.com/wp-json/wp/v2/posts?_embed&per_page=100"
+    );
 
-      const response =
-        await fetch(
-          "https://blog.girlswithwine.com/wp-json/wp/v2/posts?_embed&per_page=100"
-        );
+   
 
-      const blogs =
-        await response.json();
+    const blogs = await response.json();
 
-      if (
-        !Array.isArray(
-          blogs
-        )
-      ) {
+    
 
-        throw new Error(
-          "Invalid blog response"
-        );
-      }
+    if (!Array.isArray(blogs)) {
+      throw new Error("Invalid blog response");
+    }
 
-      let xml = `<?xml version="1.0" encoding="UTF-8"?>
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
 
 <urlset
 xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
 xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
 >`;
 
-      blogs.forEach(
-        (blog) => {
+    blogs.forEach((blog, index) => {
 
-          if (
-            !blog?.slug ||
-            blog.slug.includes(
-              "undefined"
-            ) ||
-            blog.slug.includes(
-              "null"
-            )
-          ) {
 
-            return;
-          }
+      if (!blog?.slug) {
 
-          const image =
-            blog?._embedded?.[
-              "wp:featuredmedia"
-            ]?.[0]
-              ?.source_url ||
-            "";
+        console.log(
+          "SKIPPED => SLUG MISSING"
+        );
 
-          const imageUrl =
-            getImageUrl(
-              image
-            );
+        return;
+      }
 
-          xml += `
+      // ✅ Frontend URL
+      const blogUrl =
+        `https://girlswithwine.com/blog/${blog.slug}`;
+
+      // ✅ Original WP Image
+      const originalImage =
+        blog?._embedded?.["wp:featuredmedia"]?.[0]
+          ?.source_url || "";
+
+      // ✅ Convert image domain
+      let imageUrl = originalImage;
+
+      if (
+        imageUrl &&
+        imageUrl.includes(
+          "https://blog.girlswithwine.com"
+        )
+      ) {
+
+        imageUrl = imageUrl.replace(
+          "https://blog.girlswithwine.com",
+          "https://girlswithwine.com"
+        );
+      }
+
+
+      xml += `
 <url>
 
   <loc>${escapeXml(
-            `${baseUrl}/${blog.slug}`
-          )}</loc>
+        blogUrl
+      )}</loc>
 
-  <lastmod>${new Date(
-            blog.modified
-          ).toISOString()}</lastmod>
+  <lastmod>${
+        blog?.modified
+          ? new Date(
+              blog.modified
+            ).toISOString()
+          : new Date().toISOString()
+      }</lastmod>
 
-  ${imageUrl
-              ? `
+  ${
+        imageUrl
+          ? `
   <image:image>
-    <image:loc>${escapeXml(imageUrl)}</image:loc>
-    <image:title>${escapeXml(blog.title?.rendered || "")}</image:title>
+    <image:loc>${escapeXml(
+              imageUrl
+            )}</image:loc>
+
+    <image:title>${escapeXml(
+              blog?.title?.rendered || ""
+            )}</image:title>
+
   </image:image>`
-              : ""
-            }
+          : ""
+      }
 
 </url>`;
-        }
-      );
+    });
 
-      xml += `
+    xml += `
 </urlset>`;
 
-      res.header(
-        "Content-Type",
-        "application/xml"
-      );
+   
 
-      setCacheHeaders(
-        res
-      );
+    res.setHeader(
+      "Content-Type",
+      "application/xml"
+    );
 
-      return res
-        .status(200)
-        .send(xml);
+    setCacheHeaders(res);
 
-    } catch (error) {
+    return res.status(200).send(xml);
 
-      console.log(
-        error
-      );
+  } catch (error) {
 
-      return res.status(
-        500
-      ).json({
-        message:
-          "Post sitemap failed",
-      });
-    }
-  };
+    console.log(
+      "\n❌ POST SITEMAP ERROR ❌"
+    );
+
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Post sitemap failed",
+      error: error.message,
+    });
+  }
+};

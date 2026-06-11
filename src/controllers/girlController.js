@@ -816,34 +816,34 @@ export const updateGirl =
    GET ALL GIRLS
 ============================= */
 
-export const getAllGirls =
-  async (req, res) => {
+export const getAllGirls = async (req, res) => {
+  try {
+    const girls = await Girl.find({
+      status: "Active",
+    })
+      .select(
+        "imageUrl name age heading rating views permalink status city showOnHomepage"
+      )
+      .populate({
+        path: "city",
+        select: "mainCity permalink",
+      })
+      .sort({
+        createdAt: -1,
+      })
+      .lean();
 
-    try {
-
-      const girls =
-        await Girl.find()
-
-          .populate({
-            path: "city",
-          })
-
-          .sort({
-            createdAt: -1,
-          });
-
-      res.json({
-        data: girls,
-      });
-
-    } catch (error) {
-
-      res.status(500).json({
-        message:
-          error.message,
-      });
-    }
-  };
+    res.json({
+      success: true,
+      data: girls,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 
 /* =============================
    GET BY ID

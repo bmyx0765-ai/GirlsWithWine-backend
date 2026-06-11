@@ -360,7 +360,7 @@ export const getCityPage =
 
           .populate(
             "subCities",
-            "name slug"
+            "name slug status "
           )
 
           .lean();
